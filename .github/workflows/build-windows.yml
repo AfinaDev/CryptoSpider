@@ -1,0 +1,41 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install OpenSSL
+      run: |
+        choco install openssl -y
+    
+    - name: Set OpenSSL path
+      run: |
+        $opensslPath = "C:\Program Files\OpenSSL-Win64"
+        [System.Environment]::SetEnvironmentVariable('OPENSSL_ROOT_DIR', $opensslPath, 'Process')
+        echo "OPENSSL_ROOT_DIR=$opensslPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+    
+    - name: Configure CMake
+      run: |
+        cmake -B build -DCMAKE_BUILD_TYPE=Release
+    
+    - name: Build
+      run: |
+        cmake --build build --config Release
+    
+    - name: Upload Windows executable
+      uses: actions/upload-artifact@v4
+      with:
+        name: CryptoSpider-Windows
+        path: build/Release/CryptoSpider.exe
+        if-no-files-found: error
