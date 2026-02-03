@@ -19,23 +19,85 @@ jobs:
       run: |
         choco install openssl -y
     
-    - name: Set OpenSSL path
+    - name: Find OpenSSL installation
+      id: find_openssl
+      shell: pwsh
       run: |
-        $opensslPath = "C:\Program Files\OpenSSL-Win64"
-        [System.Environment]::SetEnvironmentVariable('OPENSSL_ROOT_DIR', $opensslPath, 'Process')
-        echo "OPENSSL_ROOT_DIR=$opensslPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        # Chocolatey обычно устанавливает в Program Files
+        $possiblePaths = @(
+          "C:\Program Files\OpenSSL-Win64",
+          "C:\Program Files (x86)\OpenSSL-Win32",
+          "C:\OpenSSL-Win64",
+          "C:\OpenSSL"
+        )
+        
+        $opensslPath = $null
+        foreach ($path in $possiblePaths) {
+          if (Test-Path "$path\include\openssl\ssl.h") {
+            $opensslPath = $path
+            Write-Host "Found OpenSSL at: $opensslPath"
+            break
+          }
+        }
+        
+        if (-not $opensslPath) {
+          # Попробуем найти через переменную окружения Chocolatey
+          $chocoPath = $env:ChocolateyToolsLocation
+          if ($chocoPath) {
+            $chocoOpenSSL = Join-Path $chocoPath "openssl"
+            if (Test-Path "$chocoOpenSSL\include\openssl\ssl.h") {
+              $opensslPath = $chocoOpenSSL
+              Write-Host "Found OpenSSL at: $opensslPath"
+            }
+          }
+        }
+        
+        if (-not $opensslPath) {
+          Write-Host "OpenSSL not found in standard locations. Searching..."
+          Get-ChildItem "C:\Program Files" -Filter "OpenSSL*" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            if (Test-Path "$($_.FullName)\include\openssl\ssl.h") {
+              $opensslPath = $_.FullName
+              Write-Host "Found OpenSSL at: $opensslPath"
+            }
+          }
+        }
+        
+        if (-not $opensslPath) {
+          Write-Host "ERROR: OpenSSL not found!"
+          exit 1
+        }
+        
+        echo "OPENSSL_ROOT_DIR=$opensslPath" >> $env:GITHUB_ENV
+        echo "openssl_path=$opensslPath" >> $env:GITHUB_OUTPUT
+        Write-Host "Set OPENSSL_ROOT_DIR=$opensslPath"
     
     - name: Configure CMake
       run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DOPENSSL_ROOT_DIR="${{ env.OPENSSL_ROOT_DIR }}"
     
     - name: Build
       run: |
         cmake --build build --config Release
     
+    - name: Find executable
+      id: find_exe
+      shell: pwsh
+      run: |
+        $exePath = if (Test-Path "build/Release/CryptoSpider.exe") { "build/Release/CryptoSpider.exe" } 
+                   elseif (Test-Path "build/CryptoSpider.exe") { "build/CryptoSpider.exe" }
+                   else { "" }
+        if ($exePath) {
+          echo "exe_path=$exePath" >> $env:GITHUB_OUTPUT
+          echo "Found executable at: $exePath"
+        } else {
+          echo "Executable not found! Listing build directory:"
+          Get-ChildItem -Recurse build -Filter "*.exe" | Select-Object FullName
+          exit 1
+        }
+    
     - name: Upload Windows executable
       uses: actions/upload-artifact@v4
       with:
         name: CryptoSpider-Windows
-        path: build/Release/CryptoSpider.exe
+        path: ${{ steps.find_exe.outputs.exe_path }}
         if-no-files-found: error
